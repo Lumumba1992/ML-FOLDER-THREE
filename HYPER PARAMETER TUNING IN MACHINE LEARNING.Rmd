@@ -1,0 +1,2201 @@
+---
+title: "Introduction to Malaria Modeling Skills in R & RStudio using ML Algorithms"
+author: "LUMUMBA W. VICTOR"
+date: "`r Sys.Date()`"
+output:
+  html_document:  
+  word_document: default
+  pdf_document: default
+  df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	fig.height = 4,
+	fig.width = 8,
+	message = FALSE,
+	warning = FALSE,
+	comment = NA)
+```
+
+## Confirmation and setting of working directory
+```{r}
+setwd("~/TMMS2024")
+```
+
+## Installation and loading of necessary packages/libraries
+
+# Loading libraries
+```{r}
+library(caret) #for training machine learning models
+library(psych) ##for description of  data
+library(ggplot2) ##for data visualization
+library(caretEnsemble)##enables the creation of ensemble models
+library(tidyverse) ##for data manipulation
+library(rpart) ## for plotting the decision tree (CART)
+library(mlbench)  ## For benchmarking ML Models
+library(flextable) ## To create and style tables
+library(mltools) #for hyperparameter tuning
+library(tictoc) #for determining the time taken for a model to run
+library(ROSE)  ## for random oversampling
+library(smotefamily) ## for smote sampling
+library(ROCR) ##For ROC curve
+library(pROC) ## For visualizing, smoothing, and comparing ROC curves
+library(e1071) ## For statistical modeling and  machine learning tasks
+library(class) ## For classification using k-Nearest Neighbors and other methods
+library(caTools) ## For splitting data into training and testing sets
+library(MASS) ## Provides plotting functions and datasets
+library(ISLR) ## for practical applications of statistical learning methods
+library(boot) ## Useful for performing bootstrap resampling
+library(cvTools) ## Contains functions for cross-validation, bootstrapping, and other resampling methods
+```
+
+
+## Loading the given Malaria data
+The data was obtained from the website below
+https://statistics.knbs.or.ke/nada/index.php/catalog/111/related-materials
+
+```{r}
+mdata = read.csv("final_malaria_survey_data.csv", header = TRUE)
+head(mdata)
+```
+## Exporatory of the dataset
+```{r}
+dim(mdata)      ## View the Dimension of the Data
+names(mdata)     ## View the variable/features/column names
+#summary(mdata)    ## Descriptive Statistics
+describe(mdata)   ## Descriptive Statistics
+sum(is.na(mdata))  ## Check for missing data
+na.omit(mdata)     ## Remove rows with any missing values
+#is.na(mdata$Malaria.Test)  ## checks for missing values in the Malaria.Test column of your data frame
+```
+
+## Note: For the purpose of this training: It is assumed that the data is already clean and preprocessed 
+
+### Factor the Outcome Variable
+```{r}
+mdata$Malaria.Test <- as.factor(mdata$Malaria.Test)
+str(mdata)
+```
+
+# Plot Target variable using R Base function
+```{r}
+plot(mdata$Malaria.Test,
+     names= c("Negative", "Positive"), 
+     col=c(3,2), 
+     ylim=c(0, 3000), ylab= "Respondent", xlab= "Malaria Diagnosis", main = "Malaria Diagnosis Plot")
+#box()
+```
+
+
+# Plot Target variable using ggplot function
+```{r}
+ggplot(mdata, aes(x = Malaria.Test)) + 
+  geom_bar(fill = c("darkgreen","red")) + 
+  labs(x = "Malaria Test", 
+       y = "Respondent",
+       tittle = "Malaria Diagnosis Results",
+       caption = "Source: KNBS 2021 Data") +
+    theme_classic()
+```
+
+### Feature Plot
+```{r}
+#Perform Featureplot to see the data distribution at a glance
+featurePlot(x = mdata[, -which(names(mdata) == "Malaria.Test")],   # Predictors
+            y = mdata$Malaria.Test,                               # Target variable
+            plot = "box",                                       # Type of plot (e.g., "box", "density", "scatter")
+            strip = strip.custom(strip.names = TRUE),            # Add strip labels
+            scales = list(x = list(relation = "free"),           # Scales for x-axis
+                          y = list(relation = "free")))          # Scales for y-axis
+```
+
+
+### Check for zero variance predictors:
+```{r}
+nzv <- nearZeroVar(mdata[,-14], saveMetrics = TRUE) ## Function called nearZeroVar and captures its output in the variable nzv
+nzv
+```
+
+# Remove nzv
+```{r}
+mdata1 <- mdata[, !nzv$nzv] ## Removing features with little to no variation
+dim(mdata1)
+```
+
+# Set the seed for reproducibility
+```{r}
+set.seed(123) ## This line sets the random seed for the analysis
+```
+* Random seeds are used to ensure reproducibility. 
+
+* By setting the seed to 2024, you're telling the program to always start with the same "random" starting point when generating random numbers needed for the analysis. 
+
+* This is helpful for debugging or comparing results across different runs.
+
+## DATA PARTITION FOR MACHINE LEARNING
+
+```{r}
+set.seed(123)
+index = sample(2, nrow(mdata1),replace =T, prob=c(0.70,0.30))
+train = mdata1[index ==1,]
+test = mdata1[index ==2,]
+```
+
+# Get the dimensions of your train and test data
+```{r}
+dim(train)
+dim(test)
+```
+
+## VIEW THE MODELS IN CARET
+```{r}
+models= getModelInfo()
+names(models)
+```
+
+# Prepare training scheme for cross-validation 
+
+# Cross-validation
+This involves splitting the data into multiple subsets (folds), training the model on some folds, and testing it on    the remaining fold. The process is repeated for each fold
+# Repeated cross-validation 
+This involves performing cross-validation multiple times to reduce the variability of the results reducing the likelihood of overfitting
+
+```{r}
+control <- trainControl(method="repeatedcv", number=10, repeats=5)
+```
+
+
+```{r}
+control1 <- trainControl(method = "repeatedcv", number = 10, repeats = 5, 
+                        classProbs = TRUE, summaryFunction = twoClassSummary)
+```
+
+The code defines a trainControl object named control1, which specifies the parameters for training a machine learning model using cross-validation. It uses 10-fold cross-validation (number = 10), repeated 5 times (repeats = 5), to evaluate the model's performance. The classProbs = TRUE argument ensures that the model will calculate class probabilities, which is necessary for tasks like ROC curve analysis. The summaryFunction = twoClassSummary specifies that the performance metrics to be used for evaluating the model will include those appropriate for binary classification problems, such as ROC, sensitivity, and specificity. This control object can be passed to the train function in the caret package to guide how the model is trained and validated.
+
+# TRAIN OR BUILD MACHINE LEARNING MODELS
+The model is trained until it can detect the underlying patterns and relationships, enabling it to yield good results when presented with unseen data.
+
+# Train a Support Vector Machine (SVM) model
+# Support Vector Machine (SVM) 
+SVM is a supervised machine learning algorithm used for classification and regression tasks. 
+The primary goal of SVM is to find a hyperplane that best divides a dataset into classes.
+
+# Types of Support Vector Machine 
+# Linear SVM
+Used when data is linearly separable. It finds a straight hyperplane that separates the data into classes.
+
+# Non-linear SVM
+Used when data is not linearly separable. It employs kernel functions to map data into higher dimensions to find a hyperplane.
+
+# Applications of SVM
+  = Image recognition
+  = Text classification
+  = Healthcare (e.g., malaria diagnosis, patient risk assessment)
+  = Handwriting recognition
+==============================================================================================================================
+## TRAIN THE SUPPORT VECTOR MACHINES (SVM) MODEL
+==============================================================================================================================
+
+### Set up the hyperparameter tuning Grid
+Caret package has functions to define the tune grid for each model in order to obtain hyper parameter optimization. The code below will enable the tuning of the parameter for the Support Vector Machines (SVM)
+```{r}
+tuneGrid_svm <- expand.grid(C= c(0.1, 1, 10, 100),
+                            sigma = c(0.01, 0.1, 1))
+```
+### Alternative Tune for the SVM
+```{r}
+#tuneGrid_svm <- expand.grid(C = seq(1, 100, by = 2),
+                            #sigma = seq(0.01, 1, by = 0.05))
+
+```
+
+
+```{r}
+# ----------------------------------------------------------------------------------------------------------------------------
+# Train a Support Vector Machine (SVM) model
+# ----------------------------------------------------------------------------------------------------------------------------
+set.seed(123)
+tic()
+SvmModel <- train(Malaria.Test~., 
+                  data=train, 
+                  method="svmRadial", 
+                  preProcess= c("scale", "center"), 
+                  trControl=control1,
+                  tuneGrid = tuneGrid_svm,
+                  tuneLength=10, 
+                  na.action = na.omit)
+toc()
+#SvmModel
+# --------------------------------------------------------------------------------------------------------------------------------
+# Make prediction on test dataset using Trained SVM Model
+# --------------------------------------------------------------------------------------------------------------------------------
+Svmpred= predict(SvmModel,newdata = test)
+
+# --------------------------------------------------------------------------------------------------------------------------------
+# Evaluate SVM model performance metrics
+# --------------------------------------------------------------------------------------------------------------------------------
+SVM_CM<- confusionMatrix(Svmpred,test$Malaria.Test, positive = "Positive", mode="everything")
+SVM_CM
+M1 <- SVM_CM$byClass[c(1, 2, 5, 7, 11)]
+M1
+## ------------------------------------------------------------------------------------------------------------------------------
+```
+
+
+# C:
+This parameter is known as the regularization parameter in SVMs.
+It controls the trade-off between maximizing the margin (the gap between the hyperplane and the closest data points) and minimizing the misclassification penalty.
+
+A lower C value (like 0.25) implies a softer margin, allowing for some misclassifications but prioritizing a larger margin. This can be useful for datasets with noise or outliers.
+
+# sigma (γ):
+
+This parameter controls the spread of the Gaussian function in the RBF kernel.
+A lower sigma value (like 0.1164714) corresponds to a wider Gaussian function, which essentially considers data points farther away during the decision boundary formation.
+This can be helpful for capturing smoother, less complex non-linear relationships between data points
+
+### View the Model
+```{r}
+SvmModel
+```
+
+### Plot the Model
+```{r, fig.height=5}
+plot(SvmModel, main = "A plot of Accuracy against the Regularization Parameter for the SVM")
+```
+
+### View the Results
+```{r}
+SvmModel$results
+```
+
+# Prediction using Trained SVM Model
+```{r}
+Svmpred= predict(SvmModel,newdata = test)
+
+# Combine data into a data frame
+Ground_truth<- test$Malaria.Test
+Predicted <- Svmpred
+
+resultSvm <- data.frame(Ground_truth, Predicted)
+resultSvm$Correct <- resultSvm$Ground_truth == resultSvm$Predicted
+
+# Add a column for classification results (correct/incorrect)
+resultSVM<- data.frame(test, Svmpred, resultSvm$Correct)
+print(resultSvm,150)
+```
+
+# Evaluation of SVM model performance metrics
+```{r}
+SVM_CM<- confusionMatrix(Svmpred,test$Malaria.Test, positive = "Positive", mode="everything")
+SVM_CM
+M1 <- SVM_CM$byClass[c(1, 2, 5, 7, 11)]
+M1
+```
+
+
+### plotting confusion matrix
+```{r}
+SVM_CM$table
+fourfoldplot(SVM_CM$table, col=c(2,3), main="Imbalanced SVM Confusion Matrix")
+plot(varImp(SvmModel, scale=T))
+```
+
+### Feature Importance Plot
+```{r,fig.width=7}
+var_imp <-varImp(SvmModel)
+var_imp$Variable <- rownames(var_imp)
+rownames(var_imp) <- NULL
+
+ggplot(var_imp, aes(x = reorder(Variable, Importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Importance") +
+  ggtitle("Feature Importance Plot for SVM Model")
+```
+
+### ROC and AUC for the Support Vector Machines
+
+```{R}
+predsvm <- predict(SvmModel, newdata = test, type = "prob")
+predsvm
+```
+
+### Create a prediction object needed by ROCR
+```{r}
+pred_svm <- prediction(predsvm[, "Positive"], test$Malaria.Test)
+```
+
+### Calculate performance measures like ROC curve
+```{r}
+perf_svm <- performance(pred_svm, "tpr", "fpr")
+```
+
+### Plot the ROC curve
+```{r, fig.height=5, fig.width=7}
+plot(perf_svm, colorize = TRUE, main = "ROC Curve and AUC for Support Vector Machines")
+auc_value <- performance(pred_svm, "auc")@y.values[[1]] ### Add AUC value as text on the plot
+auc_label <- paste("AUC =", round(auc_value, 2))
+text(0.5, 0.3, auc_label, col = "blue", cex = 1.5)  # Adjust position
+```
+
+================================================================================================================================
+## TRAIN THE DECISION TREE
+================================================================================================================================
+### Hyperparameter Tuning
+Similar to SVM, caret package has a function to hyper parameter tuning in decision tree model to optimize the parformance of the model. The code will create the parameter tuning scheme so as the model developed has the optimized performance.
+
+```{r}
+tuneGrid_dt <- expand.grid(cp = seq(0.001, 0.1, by = 0.01))
+```
+
+```{r}
+#-------------------------------------------------------------------------------------------------------------------------------
+### Training the Model
+set.seed(123)
+tic()
+DTModel <- train(factor(Malaria.Test)~., 
+                 data=train, 
+                 method="rpart", 
+                 trControl=control,
+                 tuneGrid = tuneGrid_dt)
+toc()
+
+#-------------------------------------------------------------------------------------------------------------------------------
+# View the Model
+DTModel
+
+#------------------------------------------------------------------------------------------------------------------------------------------
+## Prediction and Confusion Matrix
+DTpred=predict(DTModel,newdata = test)
+DT.cM<- confusionMatrix(DTpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+DT.cM
+
+#------------------------------------------------------------------------------------------------------------------------------------------
+### Prediction
+T2<- DT.cM$byClass[c(1, 2, 5, 7, 11)]
+T2
+#-------------------------------------------------------------------------------------------------------------------------------------------
+```
+
+### Plot the CART Model
+```{r}
+plot(DTModel)
+```
+
+### View the Results
+```{r}
+DTModel$results
+```
+
+
+### Best Tune
+```{r}
+DTModel$bestTune
+```
+
+### Plot the CART Tree
+```{r, fig.height=7}
+library(rpart)
+library(rattle)
+library(rpart)
+library(party)
+library(partykit)
+library(rpart.plot)
+fancyRpartPlot(DTModel$finalModel)
+```
+
+### Alternative Decision Tree Plot
+```{r, fig.height=6}
+rpart.plot(DTModel$finalModel)
+```
+
+### plotting confusion matrix
+```{r, fig.height=4, fig.width=8}
+DT.cM$table
+fourfoldplot(DT.cM$table, col=rainbow(4), main="Imbalanced DT Confusion Matrix")
+plot(varImp(DTModel, scale=T))
+vip::vip(DTModel)
+```
+
+### ROC and AUC for the Decision Tree Model
+```{R}
+preddt <- predict(DTModel, newdata = test, type = "prob")
+preddt
+```
+
+### Create a prediction object needed by ROCR
+```{r}
+pred_dt<- prediction(preddt[, "Positive"], test$Malaria.Test)
+```
+
+### Calculate performance measures like ROC curve
+```{r}
+perf_dt <- performance(pred_dt, "tpr", "fpr")
+```
+
+### Plot the ROC curve
+```{r, fig.height=5, fig.width=7}
+plot(perf_dt, colorize = TRUE, main = "ROC Curve and AUC for Decision Tree")
+auc_value <- performance(pred_dt, "auc")@y.values[[1]] ### Add AUC value as text on the plot
+auc_label <- paste("AUC =", round(auc_value, 2))
+text(0.5, 0.3, auc_label, col = "blue", cex = 1.5)  # Adjust position
+```
+
+=================================================================================================================================
+# TRAIN THE RANDOM FOREST MODEL
+=================================================================================================================================
+
+Random Forest is an ensemble learning method used primarily for classification and regression tasks. It works by constructing multiple decision trees during training and outputting the mode of the classes for classification or the mean prediction for regression of the individual trees. Each tree in the forest is trained on a random subset of the training data, both in terms of the rows (through a technique called bootstrap sampling) and the columns (selecting a random subset of features). This randomness helps ensure that the trees are diverse and uncorrelated, which reduces the risk of overfitting and improves the model's generalization to unseen data. This is an ensemble learning method that combines multiple decision trees to improve prediction accuracy and reduce variance.
+
+The key idea behind Random Forest is that while individual decision trees may be prone to overfitting, the average of many uncorrelated trees has a lower variance. As the number of trees in the forest increases, the model's performance stabilizes and tends to improve. Random Forests also provide a measure of feature importance, which ranks the features based on their contribution to the predictive power of the model. This feature is particularly useful in understanding the relationships within the data and for dimensionality reduction.
+
+Random Forest is widely appreciated for its robustness, as it perorms well on a wide range of data sets, including those with non-linear relationships, missing values, and large numbers of features. It requires relatively little hyperparameter tuning compared to other machine learning algorithms and is resistant to overfitting, making it a reliable and versatile choice in various applications. However, one downside is that Random Forests can be computationally intensive, especially as the number of trees increases, and they may be less interpretable than simpler models like individual decision trees.
+
+# mtry
+This parameter controls the number of features randomly chosen as candidates for splitting a node in each tree.
+
+### Hyper Parameter Tuning
+```{r}
+tuneGrid_rf <- expand.grid(mtry = seq(1, 20, by = 1))
+```
+
+
+```{R}
+set.seed(123)
+tic()
+RFModel <- train(factor(Malaria.Test)~., 
+                 data=train, 
+                 method="rf", 
+                 trControl=control, 
+                 tuneGrid = tuneGrid_rf,
+                 ntree = 500,
+                 na.action = na.omit)
+toc()
+```
+
+### View the Model
+```{r}
+RFModel
+```
+
+### Plot the Model
+```{r}
+plot(RFModel)
+```
+
+### Plot the Error Rate and the Number of Tree
+```{r}
+plot(RFModel$finalModel)
+```
+
+### Results and the Best Tune
+```{r}
+RFModel$results
+```
+
+```{r}
+RFModel$bestTune
+```
+
+The Random Forest model was optimized using the mtry parameter, which specifies the number of variables randomly sampled as candidates at each split. After tuning, an mtry value of 7 was determined to be optimal. This means that at each node, 7 features are considered for splitting, balancing between overfitting and underfitting. This choice enhances the model's ability to generalize by reducing correlation between trees and improving overall predictive performance. By setting mtry to 7, the Random Forest model effectively utilizes the feature space, leading to more accurate and robust predictions.
+
+### Prediction
+```{r}
+# Prediction on test data set using RF model
+RFpred=predict(RFModel,newdata = test)
+
+# Evaluate RF model performance metrics
+RF_CM<- confusionMatrix(RFpred, as.factor(test$Malaria.Test), positive = "Positive", mode='everything')
+RF_CM
+M2<- RF_CM$byClass[c(1, 2, 5, 7, 11)]
+M2
+```
+# Ploting Random Forest confusion matrix
+```{r}
+fourfoldplot(RF_CM$table, col=rainbow(4), main="RF Confusion Matrix") #RF Confusion Matrix 4fold plot
+```
+
+# Show relative importance of features
+```{r}
+# Plot using R base function
+plot(varImp(RFModel, scale=T))
+
+# Alternatively
+vip::vip(RFModel)
+
+# Alternatively using ggplot function
+var_imp <-varImp(RFModel)
+ggplot(var_imp, aes(x = reorder(Variable, Importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Importance") +
+  ggtitle("Feature Importance Plot for RF Model")
+```
+
+# Create ROC curve for RF model
+```{r, fig.height=5, fig.width=6}
+# Make predictions on the test set using type='prob'
+predrf <- predict(RFModel, newdata = test, type = "prob")
+# Create a prediction object needed by ROCR
+pred_rf <- prediction(predrf[, "Positive"], test$Malaria.Test)
+# Calculate performance measures like ROC curve
+perf_rf <- performance(pred_rf, "tpr", "fpr")
+# Plot the ROC curve
+plot(perf_rf, colorize = TRUE, main = "ROC Curve-Random Forest")
+# Compute AUC
+auc_value <- performance(pred_rf, "auc")@y.values[[1]]
+auc_label <- paste("AUC =", round(auc_value, 2))
+# Add AUC value as text on the plot
+text(0.5, 0.3, auc_label, col = "red", cex = 1.5)  # Adjust position
+```
+
+# Receiver Operating Characteristic (ROC) Curve
+
+The ROC curve is a graphical representation of the performance of a classification model at all classification thresholds. The curve plots the True Positive Rate (TPR) against the False Positive Rate (FPR).
+
+# True Positive Rate (TPR): Also known as sensitivity or recall, 
+It is the ratio of correctly predicted positive observations to the actual positives. 
+TPR = TP / (TP + FN), where TP is True Positives and FN is False Negatives.
+
+# False Positive Rate (FPR)
+It is the ratio of incorrectly predicted positive observations to the actual negatives. 
+FPR = FP /(FP + TN), where FP is False Positives and TN is True Negatives.
+
+# The AUC is the area under the ROC curve. 
+It ranges from 0 to 1, with higher values indicating better model performance. 
+AUC = 0.5 suggests no discrimination (i.e., the model is no better than random guessing), 
+AUC = 1.0 indicates perfect discrimination.
+
+AUC = 0.99 is very close to 1.0, suggesting that the model has a high true positive rate and a low false positive rate. This indicates that the Random Forest classifier has an excellent ability to distinguish between the positive and negative classes.
+
+=================================================================================================================================
+## TRAIN THE LOGISTIC REGRESSION MODEL
+=================================================================================================================================
+
+### Hyper Parameter Tuning
+Logistic regression typically doesn't require extensive hyper parameter tuning unless one is using regularization techniques like; ridge or lasso. For a regular logistic regression, one should focus on data preprocessing and feature selection rather than hyper parameter tuning. 
+For Ridge logistic regression, the following scheme will help in hyper parameter tuning
+
+```{r}
+tuneGrid_rlr <- expand.grid(lambda = seq(0,1, length = 10))
+```
+
+```{r}
+set.seed(123)
+logRegModel <- train(factor(Malaria.Test)~., 
+                     data=train, 
+                     method="glm", 
+                     trControl=control, 
+                     na.action = na.omit)
+```
+
+```{r}
+logRegModel
+```
+
+# Prediction using trained Logisitic Regression model
+```{r}
+logRegpred=predict(logRegModel,newdata = test)
+
+logRegPredProb <- predict(logRegModel, newdata = test, type ="prob")*100
+
+# Combine data into a data frame
+Ground_truth<- test$Malaria.Test
+Predicted <- logRegpred
+
+resultLR <- data.frame(Ground_truth, Predicted)
+resultLR$Correct <- resultLR$Ground_truth == resultLR$Predicted
+
+# Add a column for classification results (correct/incorrect)
+resultLogreg<- data.frame(test, logRegpred, resultLR$Correct)
+```
+
+```{r}
+head(resultLogreg)
+head(resultLR)
+```
+
+# Evaluation of Logisitic Regression model performance metrics
+```{r}
+logReg_CM<- confusionMatrix(logRegpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+logReg_CM
+M3<- logReg_CM$byClass[c(1, 2, 5, 7, 11)]
+M3
+```
+
+### plotting confusion matrix
+```{r}
+logReg_CM$table
+fourfoldplot(logReg_CM$table, col=rainbow(4), main="LR Confusion Matrix")
+```
+
+### Features Importance Plot
+```{r}
+plot(varImp(logRegModel, scale=T))
+vip::vip(logRegModel)
+# Alternatively using ggplot function
+varImp <-varImp(logRegModel)
+ggplot(varImp, aes(x = reorder(Variable, Importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Importance") +
+  ggtitle("Feature Importance Plot for LogisticRegression Model")
+```
+
+### ROC and AUC for Binary Logistic Regression Model
+```{r, fig.height=5}
+# Make predictions on the test set using type='prob'
+predlogReg <- predict(logRegModel, newdata = test, type = "prob")
+# Create a prediction object needed by ROCR
+pred_logReg <- prediction(predlogReg[, "Positive"], test$Malaria.Test)
+# Calculate performance measures like ROC curve
+perf_logReg <- performance(pred_logReg, "tpr", "fpr")
+# Plot the ROC curve
+plot(perf_logReg, colorize = TRUE, main = "ROC Curve-Logistic Regression")
+# Compute AUC
+auc_value <- performance(pred_logReg, "auc")@y.values[[1]]
+auc_label <- paste("AUC =", round(auc_value, 2))
+# Add AUC value as text on the plot
+text(0.5, 0.3, auc_label, col = "blue", cex = 1.5)  # Adjust position and other text parameters as needed
+```
+
+================================================================================================================================
+## TRAIN THE K-NEAREST NEIGHBORS (k-NN)
+================================================================================================================================
+k-NN is a simple, non-parametric, and lazy learning algorithm used for both classification and regression tasks.
+
+### k
+In kNN, k refers to the number of nearest neighbors considered for classifying a new data point. If k = 3, the model would classify new data points based on the majority vote of their 7 closest neighbors in the training data.
+
+### Hyper parameter Tuning
+Like all other models, caret has a way of tuning hyper parameter in the knn model. The parameter of interest in knn is the values of k, which has to be optimum. The code below will tune the parameter of interest
+
+```{r}
+tuneGrid_knn <- expand.grid(k = seq(1, 21, by = 2))
+```
+
+
+```{r}
+set.seed(123)
+knnModel <- train(factor(Malaria.Test)~., 
+                  data = train, 
+                  method ="knn", 
+                  tuneGrid = tuneGrid_knn,
+                  trControl = control)
+knnModel
+```
+
+### View the Accuracy against K-Neighbors
+```{r}
+ggplot(knnModel, highlight = TRUE)+
+  labs(title = "The Plot of Accuracy across K-Neighbors for k-NN",
+       x="Neighbors",
+       y="ACcuracy (Repeated Cross Validation")
+```
+
+### View the Results
+```{r}
+knnModel$results
+```
+
+### View the Best Tune
+```{r}
+knnModel$bestTune
+```
+
+The K-Nearest Neighbors (KNN) model was optimized with k = 3, meaning the model predicts the outcome for a given data point by considering the three closest data points in the feature space. The choice of k = 3 balances bias and variance, providing a model that is both flexible and generalizable. With a smaller k, the model becomes more sensitive to local patterns in the data, which helps capture underlying relationships without overfitting to noise. By considering three neighbors, the model averages the influence of the closest data points, leading to more stable and reliable predictions. This k value is particularly effective when the data is sufficiently dense, allowing the model to accurately classify or predict outcomes based on the majority vote of the nearest neighbors. Ultimately, the KNN model with k = 3 ensures a robust and interpretable approach to pattern recognition and classification tasks.
+
+### Prediction using knnModel
+```{r}
+knnpred = predict(knnModel,newdata = test)
+```
+
+### Evaluation of model performance metrics
+```{r}
+knn_CM<- confusionMatrix(knnpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+M4<- knn_CM$byClass [c(1, 2, 5, 7, 11)]
+M4
+
+#plotting confusion matrix
+knn_CM$table
+fourfoldplot(knn_CM$table, col=rainbow(4), main="KNN Confusion Matrix")
+```
+
+### Feature Importance Plot
+```{r}
+plot(varImp(knnModel, scale=T))
+# Alternatively using ggplot function
+varImp <-varImp(knnModel)
+ggplot(varImp, aes(x = reorder(Variable, Importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Importance") +
+  ggtitle("Feature Importance Plot for the KNN Model")
+```
+
+### ROC and AUC for the KNN
+```{r, fig.height=5}
+# Make predictions on the test set using type='prob'
+predknn <- predict(knnModel, newdata = test, type = "prob")
+# Create a prediction object needed by ROCR
+pred_knn <- prediction(predknn[, "Positive"], test$Malaria.Test)
+# Calculate performance measures like ROC curve
+perf_knn <- performance(pred_knn, "tpr", "fpr")
+# Plot the ROC curve
+plot(perf_knn, colorize = TRUE, main = "ROC Curve for K-Nearest Neighbors")
+# Compute AUC
+auc_value <- performance(pred_knn, "auc")@y.values[[1]]
+auc_label <- paste("AUC =", round(auc_value, 2))
+# Add AUC value as text on the plot
+text(0.5, 0.3, auc_label, col = "blue", cex = 1.5)  # Adjust position and other text parameters as needed
+```
+
+================================================================================================================================
+## TRAIN THE NEURAL NETWORK
+================================================================================================================================
+# Neural Network (NN) 
+**NN is a computational model inspired by the way biological neural networks in the human brain process information. 
+**They consist of interconnected layers of nodes, or neurons, which work together to perform complex tasks such as       classification, regression, and more. 
+**Neural Networks are the foundation of deep learning and have proven highly effective in tasks involving image recognition
+
+### Hyper Parameter Tuning
+```{r}
+tuneGrid_ann <- expand.grid(size = c(3,5,7), decay = c(0.1, 0.5, 0.9))
+```
+
+#### expand.grid()
+Function Purpose: The expand.grid() function in R is used to create a data frame from all combinations of the supplied vectors. It’s useful for generating a grid of hyperparameters for model tuning.
+2. size = c(3, 5, 7)
+
+#### size: 
+This represents the number of neurons (or units) in the hidden layer of the neural network.
+
+#### Values Provided:
+3: The hidden layer has 3 neurons.
+5: The hidden layer has 5 neurons.
+7: The hidden layer has 7 neurons.
+3. decay = c(0.1, 0.5, 0.9)
+
+##### decay: 
+This parameter controls the weight decay, which is a form of regularization used to prevent overfitting by penalizing large weights in the network.
+
+##### Values Provided:
+0.1: Low regularization.
+0.5: Medium regularization.
+0.9: High regularization.
+
+### How expand.grid() Works with These Parameters
+Grid Creation: The expand.grid() function creates a data frame where each row represents a unique combination of the hyperparameters size and decay. The resulting grid will have all possible combinations of these values, which can then be used during the training process of the neural network model.
+
+```{r}
+tuneGrid_ann
+```
+
+```{r}
+set.seed(123)
+tic()
+set.seed(123)
+nnModel <- train(Malaria.Test ~ ., 
+                  data = train, 
+                  method = "nnet", 
+                  trControl = control,
+                  tuneGrid = tuneGrid_ann, 
+                  linout = FALSE, 
+                  trace = FALSE,
+                  maxit = 200)
+
+toc()
+```
+
+### Prediction and Confusion Matrix
+```{r}
+nnModel
+nnpred=predict(nnModel,newdata = test)
+nn_CM<- confusionMatrix(nnpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+nn_CM
+M5<- nn_CM$byClass[c(1, 2, 5, 7, 11)]
+M5
+```
+
+### plotting confusion matrix
+```{r}
+nn_CM$table
+fourfoldplot(nn_CM$table, col=rainbow(4), main="Neural Network Confusion Matrix")
+plot(varImp(nnModel, scale=T))
+```
+
+### Feature Importance Plot; ggplot
+```{r}
+varImp <-varImp(nnModel)
+ggplot(varImp, aes(x = reorder(Variable, Importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Importance") +
+  ggtitle("Feature Importance Plot for the Artificial Neural Ne Model")
+```
+
+### ROC and AUC for the KNN
+```{r, fig.height=5}
+# Make predictions on the test set using type='prob'
+prednn <- predict(nnModel, newdata = test, type = "prob")
+# Create a prediction object needed by ROCR
+pred_nn <- prediction(prednn[, "Positive"], test$Malaria.Test)
+# Calculate performance measures like ROC curve
+perf_nn <- performance(pred_nn, "tpr", "fpr")
+# Plot the ROC curve
+plot(perf_nn, colorize = TRUE, main = "ROC Curve for the Neural Network Model")
+# Compute AUC
+auc_value <- performance(pred_nn, "auc")@y.values[[1]]
+auc_label <- paste("AUC =", round(auc_value, 2))
+# Add AUC value as text on the plot
+text(0.5, 0.3, auc_label, col = "blue", cex = 1.5)  # Adjust position and other text parameters as needed
+```
+
+
+The image above depicts a neural network visualization generated using the NeuralNetTools package in R. This network is a simple feed forward neural network with an input layer, a hidden layer, and an output layer. Below is an explanation of the various components of this neural network:
+
+## Components of the Neural Network:
+### Input Layer (I1 to I17):
+
+Each node in the input layer represents a feature from the mdata. In this case, there are 17 input features, labeled I1 to I17.
+These features could be various symptoms and indicators related to severe malaria, such as age, sex, fever, cold, rigor, etc.
+
+### Hidden Layer (H1):
+The hidden layer has one node, labeled H1. The lines connecting the input nodes (I1 to I17) to the hidden node H1 represent the weights of the connections between these layers. The thickness and color of these lines indicate the strength and polarity (positive or negative) of the weights.
+
+### Output Layer (O1):
+The output layer has one node, labeled O1, which represents the predicted output of the model. In this binary classification problem, the output might be the probability of having severe malaria.
+
+### Bias Nodes (B1, B2):
+Bias nodes B1 and B2 provide an additional parameter to the model, helping it better fit the data. B1 is connected to the hidden layer, and B2 is connected to the output layer.
+
+### Interpretation of Weights:
+### Connection Weights:
+The weights of connections between layers are shown as lines with varying thickness and color. Thick lines indicate strong weights, while thin lines indicate weaker weights. The color (e.g., black or gray) might indicate the sign of the weight (positive or negative).
+
+## Explanation of the Network Functioning:
+### Input to Hidden Layer:
+Each input feature is multiplied by its corresponding weight and passed to the hidden node H1. The hidden node H1 sums these weighted inputs along with the bias B1.
+
+### Hidden Layer Activation:
+The hidden node H1 applies an activation function (commonly a nonlinear function like sigmoid or ReLU) to the summed inputs to introduce nonlinearity into the model.
+
+### Hidden to Output Layer:
+The activated output of H1 is multiplied by the weight of the connection to the output node O1 and passed to O1. Similarly, the bias B2 is also added to the output node O1.
+
+### Output Layer Activation:
+The output node O1 might apply another activation function to produce the final prediction, such as a probability score in the case of binary classification.
+
+The neural network uses the input features to predict the output through weighted connections and biases. The hidden layer allows the model to capture complex relationships between the input features. The visualization helps in understanding the network structure and the importance of different features in the prediction process.
+
+===============================================================================================================================
+## TRAINING NAIVE BAYES MODEL
+===============================================================================================================================
+
+### Hyper Parameter Tuning
+```{r}
+tuneGrid_nb <- expand.grid(fL = c(0, 0.5, 1.0),
+                           usekernel = c(TRUE, FALSE),
+                           adjust = c(0, 0.5, 1.0))
+```
+
+#### 1. expand.grid()
+Function Purpose: The expand.grid() function in R creates a data frame from all combinations of the supplied vectors or factors. It’s particularly useful for generating a grid of hyperparameters that can be used in model tuning.
+2. fL = c(0, 0.5, 1.0)
+
+#### fL: 
+This represents a hyperparameter used in Naive Bayes modeling, particularly in functions from packages like e1071 or caret.
+Purpose of fL: It stands for "Laplace smoothing" or "fL" (feature level), which is a technique used to handle zero frequencies in categorical data. When a category in the data does not appear in the training set, Laplace smoothing avoids zero probabilities by adding a small value (like 1 or 0.5) to each category count.
+
+#### Values Provided:
+0: No smoothing.
+0.5: Moderate smoothing.
+1.0: Full smoothing.
+3. usekernel = c(TRUE, FALSE)
+
+##### usekernel: 
+This parameter determines whether a kernel density estimator is used instead of a Gaussian distribution for continuous features.
+Purpose of usekernel:
+
+#### TRUE: 
+Use a kernel density estimator, which is a non-parametric way to estimate the probability density function of a random variable.
+
+#### FALSE: 
+Use the default Gaussian distribution assumption for continuous features.
+4. adjust = c(0, 0.5, 1.0)
+
+#### adjust:
+This parameter is associated with the kernel density estimator. It adjusts the bandwidth of the kernel density estimate, which influences how smooth the estimated density function is.
+
+#### Purpose of adjust:
+0: No adjustment to the bandwidth.
+0.5: Reduce the bandwidth by half, resulting in a sharper density estimate.
+1.0: Use the default bandwidth, resulting in the standard smoothing.
+
+### How the Hyper parameter is done
+```{r}
+tuneGrid_nb
+```
+
+In the context of Naive Bayes, the term "kernel" typically refers to the use of kernel density estimation (KDE) when estimating the probability distribution of continuous features. The "kernel" in Naive Bayes is not about using multiple kernels but rather whether to use a kernel-based method or not for estimating the distribution of continuous variables.
+
+### Key Points:
+#### No Kernel (usekernel = FALSE): 
+When usekernel = FALSE, Naive Bayes assumes that the continuous features follow a Gaussian (normal) distribution.
+
+#### Kernel (usekernel = TRUE): 
+When usekernel = TRUE, the algorithm uses kernel density estimation to estimate the probability distribution of the continuous features, which does not assume any specific parametric form (like the Gaussian distribution).
+
+## How Many Kernels?
+Single Kernel Per Feature: 
+If usekernel = TRUE, a single kernel density estimation method is applied to each continuous feature individually to estimate its distribution. This means each continuous feature will have its distribution estimated using KDE, but the number of kernels corresponds to the number of continuous features in the dataset, not a specific number of different kernel types.
+
+Multiple Features: 
+If your dataset has multiple continuous features, KDE will be applied independently to each feature.
+
+### Summary:
+The term "kernel" in Naive Bayes refers to the method of estimating the probability distribution of continuous features. If usekernel = TRUE, the Naive Bayes classifier will use kernel density estimation for each continuous feature in the dataset, but it's not about using multiple kernel functions; it's about using a kernel density estimation for each feature.
+
+### Develope the Naive Bayes Model
+```{r}
+set.seed(123)
+NBModel <- train(factor(Malaria.Test) ~ ., 
+                 data = train, method = "nb",
+                 trControl = control,
+                 tuneGrid = tuneGrid_nb)
+NBModel
+
+```
+
+### Prediction and Confusion Matrix
+```{r}
+NBpred=predict(NBModel,newdata = test)
+NB_CM<- confusionMatrix(NBpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+NB_CM
+```
+
+
+### Extract the Model's Performance Metrics
+```{r}
+M6<- NB_CM$byClass[c(1, 2, 5, 7, 11)]
+M6
+```
+
+### plotting confusion matrix
+```{r}
+NB_CM$table
+fourfoldplot(NB_CM$table, col=rainbow(4), main="Naive Bayes Confusion Matrix")
+```
+
+### Feature Importance Plot
+```{r}
+plot(varImp(NBModel, scale=T))
+# Alternatively using ggplot function
+varImp <-varImp(NBModel)
+ggplot(varImp, aes(x = reorder(Variable, Importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Importance") +
+  ggtitle("Feature Importance Plot for the NB Model")
+```
+
+### ROC and AUC for the Naive Bayes Model
+```{r, fig.height=5}
+# Make predictions on the test set using type='prob'
+prednb <- predict(NBModel, newdata = test, type = "prob")
+# Create a prediction object needed by ROCR
+pred_nb <- prediction(prednb[, "Positive"], test$Malaria.Test)
+# Calculate performance measures like ROC curve
+perf_nb <- performance(pred_nb, "tpr", "fpr")
+# Plot the ROC curve
+plot(perf_nb, colorize = TRUE, main = "ROC Curve for the Naive Bayes Model Model")
+# Compute AUC
+auc_value <- performance(pred_nb, "auc")@y.values[[1]]
+auc_label <- paste("AUC =", round(auc_value, 2))
+# Add AUC value as text on the plot
+text(0.5, 0.3, auc_label, col = "blue", cex = 1.5)  # Adjust position and other text parameters as needed
+```
+
+===============================================================================================================================
+## TRAIN A LINEAR DISCRIMINANT ANALYSIS
+===============================================================================================================================
+
+#### Hyper Parameter Tuning
+Linear Discriminant Analysis (LDA) has few hyper parameter, so tuning parameter is not as common as in other algorithms. The main focus is usually on data pre-processing. No typical parameter tuning is needed for LDA. LDA is parameter-free in terms of model complexity
+
+### Model Estimation
+```{r}
+set.seed(123)
+LDAModel <- train(factor(Malaria.Test)~., 
+                  data=train, 
+                  method="lda", 
+                  trControl=control)
+LDAModel
+```
+
+### Prediction and Confusion Matrix
+```{r}
+LDApred=predict(LDAModel,newdata = test)
+LDA_CM<- confusionMatrix(LDApred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+LDA_CM
+```
+
+### Extract the Model's Performance Metrics
+```{r}
+M7<- LDA_CM$byClass[c(1, 2, 5, 7, 11)]
+M7
+```
+
+### plotting confusion matrix
+```{r}
+LDA_CM$table
+fourfoldplot(LDA_CM$table, col=rainbow(4), main="LDA Confusion Matrix")
+```
+
+### Feature Importance Plot
+```{r}
+plot(varImp(LDAModel, scale=T))
+# Alternatively using ggplot function
+varImp <-varImp(LDAModel)
+ggplot(varImp, aes(x = reorder(Variable, Importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Importance") +
+  ggtitle("Feature Importance Plot for the LDA Model")
+```
+
+### ROC and AUC for the LDA Model
+```{r, fig.height=5}
+# Make predictions on the test set using type='prob'
+predlda <- predict(LDAModel, newdata = test, type = "prob")
+# Create a prediction object needed by ROCR
+pred_lda <- prediction(predlda[, "Positive"], test$Malaria.Test)
+# Calculate performance measures like ROC curve
+perf_lda <- performance(pred_lda, "tpr", "fpr")
+# Plot the ROC curve
+plot(perf_lda, colorize = TRUE, main = "ROC Curve for the LDA Model")
+# Compute AUC
+auc_value <- performance(pred_lda, "auc")@y.values[[1]]
+auc_label <- paste("AUC =", round(auc_value, 2))
+# Add AUC value as text on the plot
+text(0.5, 0.3, auc_label, col = "blue", cex = 1.5)  # Adjust position and other text parameters as needed
+```
+
+===============================================================================================================================
+## TRAINING LINEAR VECTOR QUANTIZATION
+===============================================================================================================================
+
+### Hyper Parameter Tuning
+```{r}
+tuneGrid_lvq <- expand.grid(size =c(5, 10, 15),
+                            k=c(1,3,5))#,
+                            #learning_rate = c(0.01, 0.05, 0.1))
+tuneGrid_lvq
+```
+
+### expand.grid():
+
+Function Purpose: The expand.grid() function in R creates a data frame from all combinations of the input vectors. Each row in the resulting data frame represents a unique combination of the parameters listed.
+In Context: It generates a grid of hyperparameter values to be used for tuning the LVQ model.
+
+### size = c(5, 10, 15):
+Purpose: The size parameter refers to the number of prototypes (or reference vectors) in each class. These prototypes represent the centroids or typical examples for each class.
+Values: The code tries three different values for size: 5, 10, and 15. This means that the model will be trained and evaluated with 5, 10, and 15 prototypes per class.
+
+### k = c(1, 3, 5):
+Purpose: The k parameter typically represents the number of nearest neighbors to consider in the LVQ algorithm. It determines how many neighbors are used to classify a new instance during the training process.
+Values: The code tries three different values for k: 1, 3, and 5. This means that the model will be trained and evaluated with 1, 3, and 5 neighbors.
+
+### learning_rate = c(0.01, 0.05, 0.1):
+Purpose: The learning_rate parameter controls how quickly the model adjusts the prototypes during training. A smaller learning rate results in slower, more gradual updates, while a larger learning rate results in quicker, more significant updates.
+Values: The code tries three different values for learning_rate: 0.01, 0.05, and 0.1. This means that the model will be trained and evaluated with these different learning rates.
+
+### What This Code Does:
+Grid of Hyperparameters: The expand.grid() function creates a grid of all possible combinations of the size, k, and learning_rate parameters. This grid will be used to train and evaluate the LVQ model for each combination, allowing you to identify the best set of hyperparameters based on model performance.
+
+Hyperparameter Tuning: By trying different combinations of these parameters, the goal is to find the optimal set of parameters that results in the best performance of the LVQ model on the given data.
+
+```{r}
+set.seed(123)
+LVQModel <- train(factor(Malaria.Test)~., 
+                  data=train, 
+                  method="lvq", 
+                  trControl=trainControl(method = "repeatedcv", number = 10, repeats = 5, 
+                        classProbs = TRUE))
+                  #tuneGrid = tuneGrid_lvq)
+LVQModel
+```
+
+### Prediction and Confusion Matrix
+```{r}
+LVQpred=predict(LVQModel,newdata = test)
+LVQ_CM<- confusionMatrix(LVQpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+LVQ_CM
+```
+
+### Extract the Model's Performance Metrics
+```{r}
+M8<- LVQ_CM$byClass[c(1, 2, 5, 7, 11)]
+M8
+```
+
+### plotting confusion matrix
+```{r}
+LVQ_CM$table
+fourfoldplot(LVQ_CM$table, col=rainbow(4), main="LDA Confusion Matrix")
+```
+
+
+### Feature Importance Plot
+```{r}
+plot(varImp(LVQModel, scale=T))
+# Alternatively using ggplot function
+varImp <-varImp(LVQModel)
+ggplot(varImp, aes(x = reorder(Variable, Importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Importance") +
+  ggtitle("Feature Importance Plot for the LVQ Model")
+```
+
+### ROC and AUC for the Naive Bayes Model
+
+
+
+
+===============================================================================================================================
+# TRAIN BAGGING MODEL
+===============================================================================================================================
+Bagging, short for Bootstrap Aggregating, is an ensemble learning technique designed to improve the stability and accuracy of machine learning algorithms, particularly those prone to overfitting, such as decision trees. The core idea behind bagging is to reduce variance by training multiple models on different subsets of the training data and then combining their predictions. These subsets are created by sampling the original dataset with replacement, a process known as bootstrapping. As a result, each model in the ensemble is trained on a slightly different version of the data, introducing diversity among the models. Once all models are trained, their predictions are aggregated, typically by averaging in the case of regression or by majority voting in the case of classification. This aggregation step smooths out the predictions, leading to improved generalization and reduced overfitting. Bagging is particularly effective in models like decision trees, where small changes in the training data can lead to significantly different models. By averaging these models, bagging produces a more robust and reliable final prediction.
+
+Bagging and Random Forest are both ensemble learning techniques that aim to improve the accuracy and robustness of machine learning models by combining the predictions of multiple models. However, there are key differences between the two:
+
+Core Concept: Bagging, short for Bootstrap Aggregating, involves training multiple copies of the same model (such as decision trees) on different subsets of the training data, generated by random sampling with replacement (bootstrapping). Each model is trained independently, and the final prediction is made by aggregating the predictions of all models, typically through averaging (for regression) or majority voting (for classification).
+
+Feature Selection: Random Forest builds upon the idea of bagging by introducing an additional layer of randomness. In Random Forest, not only is each tree trained on a different bootstrap sample of the data, but each node in the decision tree considers only a random subset of features when deciding where to split. This feature randomness ensures that the trees in the forest are even more diverse, reducing the correlation between them and further improving the model’s ability to generalize.
+
+Model Type: Bagging can be applied to any type of base model, but it is most commonly used with decision trees. Random Forest, on the other hand, specifically refers to an ensemble of decision trees. While bagging aims to reduce variance by averaging the predictions of many models, Random Forest adds the benefit of reducing the likelihood of overfitting by ensuring that individual trees do not rely too heavily on any one feature.
+
+Overfitting: Both bagging and Random Forest reduce the risk of overfitting, but Random Forest typically provides a stronger reduction due to the additional randomness in feature selection. This makes Random Forests generally more robust and accurate, especially in high-dimensional datasets where some features might dominate the decision process if they were considered at every split.
+
+In summary, while bagging involves training multiple models on bootstrapped samples and combining their predictions, Random Forest goes a step further by adding randomness in feature selection during tree construction, leading to a more diverse set of models and typically better performance.
+
+### Hyper Parameter Tuning
+```{r}
+tuneGrid_bag <- expand.grid(cp = seq(0, 0.1, length = 10 ))
+
+
+
+tuneGrid_bagging <- expand.grid(
+  mtry = seq(1, 20, by = 1),            # Number of variables randomly sampled as candidates at each split
+  nbagg = c(10, 20, 50, 100, 500),              # Number of bootstrap samples or trees
+  minsplit = seq(10, 50, by = 10),      # Minimum number of observations to split a node
+  minbucket = seq(5, 25, by = 5)        # Minimum number of observations in any terminal node (leaf)
+)
+tuneGrid_bagging
+```
+
+```{r}
+tuneGrid_bag
+```
+
+
+```{r}
+set.seed(123)
+tic()
+bagModel <- train(factor(Malaria.Test)~., 
+                  data=train, 
+                  method="treebag", 
+                  trControl=control)
+toc()
+```
+
+### View the Model
+```{r}
+bagModel$finalModel
+```
+
+### View the Model's Results
+```{r}
+bagModel$results
+```
+
+### View the Best Tune
+```{r}
+bagModel$bestTune
+```
+
+```{r}
+bagpred=predict(bagModel,newdata = test)
+bag_CM<- confusionMatrix(bagpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+M9<- bag_CM$byClass[c(1, 2, 5, 7, 11)]
+M9
+```
+
+###plotting confusion matrix
+```{r}
+bag_CM$table
+fourfoldplot(bag_CM$table, col=rainbow(4), main="Bagging Confusion Matrix")
+plot(varImp(bagModel, scale=T))
+```
+
+### Features Importance Plot using ggplot
+```{r}
+plot(varImp(bagModel, scale=T))
+# Alternatively using ggplot function
+varImp <-varImp(bagModel)
+ggplot(varImp, aes(x = reorder(Variable, Importance), y = importance)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  coord_flip() +
+  xlab("Variable") +
+  ylab("Importance") +
+  ggtitle("Feature Importance Plot for the Bag Model")
+```
+
+### ROC and AUC for the Bagging Model
+```{r, fig.height=6}
+# Make predictions on the test set using type='prob'
+predbag <- predict(bagModel, newdata = test, type = "prob")
+# Create a prediction object needed by ROCR
+pred_bag <- prediction(predbag[, "Positive"], test$Malaria.Test)
+# Calculate performance measures like ROC curve
+perf_bag <- performance(pred_bag, "tpr", "fpr")
+# Plot the ROC curve
+plot(perf_bag, colorize = TRUE, main = "ROC Curve for the Bagging Model")
+# Compute AUC
+auc_value <- performance(pred_bag, "auc")@y.values[[1]]
+auc_label <- paste("AUC =", round(auc_value, 2))
+# Add AUC value as text on the plot
+text(0.5, 0.3, auc_label, col = "blue", cex = 1.5)  # Adjust position and other text parameters as needed
+```
+
+=====================================================================================================================================
+## TRAIN THE BOOSTING MODEL
+=====================================================================================================================================
+
+### Hyper paremeter Tuning
+```{r}
+tuneGrid_boo <- expand.grid(iter = c(50, 100, 150),
+                            maxdepth = seq(1, 21, by=2),
+                            nu = seq(0.01, 0.1, by = 0.01))
+tuneGrid_boo
+```
+
+expand.grid(...):
+
+This function is used to create a data frame from all combinations of the supplied vectors or factors. Essentially, it generates all possible combinations of the hyperparameter values you specify, creating a "grid" of parameters that will be tested during model training.
+iter = c(50, 100, 150):
+
+iter likely refers to the number of boosting iterations (or rounds). Boosting algorithms add trees iteratively to improve model performance, so iter controls how many trees will be added.
+The values 50, 100, and 150 indicate that you want to test models with 50, 100, and 150 boosting iterations, respectively.
+maxdepth = seq(1, 21, by=2):
+
+maxdepth specifies the maximum depth of the trees in the boosting algorithm. The depth of a tree determines how complex the model can be, with deeper trees potentially capturing more details but also increasing the risk of overfitting.
+seq(1, 21, by=2) generates a sequence of numbers starting at 1 and ending at 21, incrementing by 2. This means the grid will include trees with depths of 1, 3, 5, ..., up to 21.
+nu = seq(0.01, 0.1, 1):
+
+nu likely refers to the learning rate (or shrinkage parameter) in the boosting algorithm. The learning rate controls how much each tree influences the final model. Smaller values of nu lead to slower learning and more conservative models, but potentially more accurate ones when more iterations are used.
+seq(0.01, 0.1, 1) is intended to generate a sequence of learning rates starting at 0.01 and ending at 0.1. However, the syntax here is incorrect for generating a sequence. The correct syntax should be seq(0.01, 0.1, by=0.01), which generates values 0.01, 0.02, ..., up to 0.1.
+
+### View the Grid Search
+```{r}
+tuneGrid_boo
+```
+
+
+```{r}
+set.seed(123)
+tic()
+boModel <- train(factor(Malaria.Test)~., 
+                 data=train, 
+                 method="ada", 
+                 trControl=control,
+                 tuneGrid = tuneGrid_boo)
+toc()
+```
+
+### View the Model
+```{r}
+boModel
+```
+
+### Model's Results
+```{r}
+boModel$results
+```
+
+### Best Tune
+```{r}
+boModel$bestTune
+```
+
+### Plot the Accuracy Against Number of Trees
+```{r, fig.height=5}
+plot(boModel)
+```
+
+### Plot the Error Against the Number of Iterations
+```{r, fig.height=5}
+plot(boModel$finalModel)
+```
+
+### Prediction and Evaluation of the Model's Performance
+```{r}
+bopred=predict(boModel,newdata = test)
+bo_CM<- confusionMatrix(bopred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+bo_CM
+M10<- bo_CM$byClass[c(1, 2, 5, 7, 11)]
+M10
+```
+
+### plotting confusion matrix
+```{r}
+bo_CM$table
+fourfoldplot(bo_CM$table, col=rainbow(4), main="Boosting Confusion Matrix")
+```
+
+### Prediction using trained Boosting model
+```{r}
+bopred=predict(boModel,newdata = test)
+
+boPredProb <- predict(boModel, newdata = test, type ="prob")*100
+
+# Combine data into a data frame
+Ground_truth<- test$Malaria.Test
+Predicted <- bopred
+
+resultbo <- data.frame(Ground_truth, Predicted)
+resultbo$Correct <- resultbo$Ground_truth == resultbo$Predicted
+
+# Add a column for classification results (correct/incorrect)
+resultBoosting<- data.frame(test, bopred, resultbo$Correct)
+```
+
+```{r}
+head(resultBoosting)
+head(resultbo)
+```
+
+
+# Tabulate your Results [xtable(measure.score, digits = 3)]
+```{r}
+measure <-round(data.frame(SVM = M1, 
+                           RF = M2, 
+                           DT = T2, 
+                           LR = M3, 
+                           KNN = M4, 
+                           NB = M6, 
+                           LDA = M7, 
+                           LVQ = M8, 
+                           Bagging = M9, 
+                           Boosting = M10), 3) 
+rownames(measure)=c('Sensitivity', 'Specificity', 'Precision','F1-Score', 'Balanced Accuracy')
+measure
+measure
+```
+
+To determine the overall best model based on the given performance metrics—sensitivity, specificity, precision, F1-Score, and balanced accuracy—each metric needs to be carefully considered in context. Sensitivity, or the true positive rate, measures the model’s ability to correctly identify positive cases, while specificity measures the model’s ability to correctly identify negative cases. Precision is the proportion of true positive results among all positive results predicted by the model, and the F1-Score provides a balance between precision and sensitivity. Balanced accuracy takes into account both sensitivity and specificity, giving an overall measure of the model's performance across both classes.
+
+Starting with sensitivity, the Linear Discriminant Analysis (LDA) model shows the highest sensitivity at 0.919, indicating that it is particularly good at identifying positive cases. However, it has a relatively lower precision at 0.337, meaning that many of the positive predictions it makes are incorrect. This results in an F1-Score of 0.493, which is not the highest but reflects its ability to capture positive cases despite some false positives.
+
+Random Forest (RF) emerges as a strong contender with a sensitivity of 0.784 and a high specificity of 0.983. Its precision is moderate at 0.644, leading to an F1-Score of 0.707, which suggests that it maintains a good balance between correctly identifying positive cases and minimizing false positives. Furthermore, the balanced accuracy of 0.883 for Random Forest indicates that it performs well across both positive and negative cases, making it a robust and reliable model overall.
+
+In contrast, Support Vector Machine (SVM) and Decision Tree (DT) models show decent performance with balanced accuracies of 0.751 and 0.790, respectively. However, they do not outperform Random Forest in any key metric. SVM has a lower sensitivity at 0.514, which may limit its effectiveness in identifying all positive cases, and its F1-Score is also lower at 0.567.
+
+Models like K-Nearest Neighbors (KNN) and Naive Bayes (NB) have very low sensitivities (0.162 and 0.108, respectively), indicating poor performance in identifying positive cases, despite high specificities. Their F1-Scores are also low, making them less desirable choices for this classification task.
+
+Bagging and Boosting models also show strong performances with balanced accuracies of 0.868 and 0.843, respectively. Bagging has a sensitivity of 0.757 and an F1-Score of 0.659, which are both strong, but still slightly lower than those of Random Forest. Boosting has similar metrics, but again does not surpass the balanced accuracy of Random Forest.
+
+Given these considerations, Random Forest is the overall best model. It offers a well-rounded performance with high sensitivity, specificity, precision, and a strong F1-Score. Its balanced accuracy of 0.883 reflects its ability to effectively handle both classes, making it the most reliable choice for this classification problem.
+
+# Collect all resamples and compare the models
+```{r}
+results <- resamples(list(SVM=SvmModel, 
+                          RF=RFModel,
+                          DT= DTModel,
+                          LR=logRegModel,
+                          knn=knnModel,
+                          NB=NBModel,
+                          LDA=LDAModel,
+                          LVQ=LVQModel,
+                          Bagging=bagModel,
+                         Bo=boModel ))
+# summarize the distributions of the results 
+summary(results)
+```
+
+### boxplots of results
+```{r}
+bwplot(results)
+```
+# Box-and-whisker plot of results
+This type of chart is used to visualize the distribution of data. It shows the following information:
+ * The center of the data (usually the median)
+ * The spread of the data (represented by the box)
+ * The presence of any outliers (data points that fall outside a certain range)
+
+```{r}
+# dot plots of results
+ dotplot(results)
+```
+
+# ----------------------------------------------------
+## Resampling Techniques for Handling Data Imbalance
+# ----------------------------------------------------
+● Oversampling
+● Undersampling
+● Combined Resampling
+
+ * Resampling techniques are a common set of strategies used to address data imbalance in machine         learning. 
+ 
+ * These techniques involve modifying the dataset by either increasing the number of minority class       samples (oversampling) or 
+ * reducing the number of majority class samples (undersampling). Here are some key resampling            techniques:
+ 
+# 1. Oversampling:
+
+#● Random Oversampling: 
+In this method, random instances from the minority class are duplicated until a more balanced distribution is achieved. While this can balance the class distribution, it may lead to overfitting.
+  
+#● SMOTE (Synthetic Minority Over-sampling Technique): 
+SMOTE generates synthetic instances for the minority class by interpolating between neighboring instances. This approach creates new, realistic data points and helps prevent overfitting compared to random oversampling.
+
+#● ADASYN (Adaptive Synthetic Sampling)
+  * Description: An extension of SMOTE that focuses on generating more synthetic data for minority class examples that are harder to learn.
+  * Advantages: Improves the focus on difficult minority class examples, potentially enhancing model performance.
+  * Disadvantages: Similar to SMOTE, it can introduce noise if not applied carefully.
+
+#● SMOTEN
+#● SVM-SMOTE 
+#● Random oversampler
+#● Kmeans-SMOTE
+
+# 2. Undersampling
+
+#● Random Undersampling
+  * Description: Involves randomly removing examples from the majority class to balance the dataset.
+  * Advantages: Reduces the size of the dataset, making the training process faster.
+  * Disadvantages: Can lead to loss of valuable information and underfitting.
+
+#● Tomek Links
+  *Description: Removes examples from the majority class that are close to minority class examples, forming Tomek links.
+  *Advantages: Helps clean the boundary between classes, improving model performance.
+  *Disadvantages: Only removes a small number of majority class examples, may not fully balance the dataset.
+  
+#● Random undersampler  
+#● NearMiss
+#● condensed Nearest Neighbour
+#● Edited Nearest Neaghbour
+  
+# 3. Combined Resampling
+
+#● Hybrid Methods
+ *Description: Combines several resampling techniques to leverage their strengths and mitigate their weaknesses.
+ *Advantages: Can provide a more balanced and effective approach.
+ *Disadvantages: More complex to implement and require careful tuning.
+ 
+## Consideration for Effective Resampling
+* Understand Your Data: Know the extent and impact of imbalance.
+* Evaluate Multiple Techniques: Different techniques might work better for different datasets.
+* Cross-Validation: Use cross-validation to ensure that the model generalizes well.
+* Performance Metrics: Focus on metrics like F1-score, precision, recall, and AUC-ROC instead of accuracy.
+
+======================================================================================================================
+### Handle Imbalanced: Oversampled data 
+======================================================================================================================
+
+```{r}
+over <- ovun.sample(factor(Malaria.Test)~., data = train, method = "over")$data
+dim(over)
+```
+
+
+# Plot Target variable using ggplot function
+```{r}
+ggplot(over, aes(x = Malaria.Test, fill = Malaria.Test)) + 
+  geom_bar() + 
+  labs(x = "Malaria Test", 
+       y = "Respondent",
+       tittle = "Malaria Diagnosis Results",
+       caption = "Source: KNBS 2021 Data") +
+    theme_classic()
+```
+
+========================================================================================================================
+## Building Machine Learning Models
+========================================================================================================================
+
+# prepare training scheme for cross-validation
+```{r}
+ control <- trainControl(method="repeatedcv", number=10, repeats=5)
+```
+
+# Train an SVM model 
+```{r}
+ set.seed(2024)
+ tic()
+ over.svmModel <- train(Malaria.Test~., data=over, method="svmRadial", trControl=control)
+ toc()
+ over.svmModel
+ over.svmpred=predict(over.svmModel,newdata = test)
+ over.SVM.cM<- confusionMatrix(over.svmpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+ over.SVM.cM
+ over.m1<- over.SVM.cM$byClass[c(1, 2, 5, 7, 11)]
+ over.m1
+ #plotting confusion matrix
+ over.SVM.cM$table
+ fourfoldplot(over.SVM.cM$table, col=rainbow(4), main="Oversampled SVM Confusion Matrix")
+```
+
+# Train an Random Forest model
+```{r}
+set.seed(2024)
+tic()
+over.RFModel <- train(Malaria.Test~., data=over, method="rf", trControl=control)
+toc()
+over.RFModel
+over.RFpred=predict(over.RFModel,newdata = test)
+over.RF.cM<- confusionMatrix(over.RFpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+over.m2<- over.RF.cM$byClass[c(1, 2, 5, 7, 11)]
+over.m2
+#plotting confusion matrix
+over.RF.cM$table
+fourfoldplot(over.RF.cM$table, col=rainbow(4), main="Oversampled RF Confusion Matrix")
+```
+
+# Train a Logisitic Regression model
+```{r}
+set.seed(2024)
+tic()
+over.lrModel <- train(Malaria.Test~., data=over, method="glm", trControl=control)
+toc()
+over.lrModel
+over.lrpred=predict(over.lrModel,newdata = test)
+over.lr.cM<- confusionMatrix(over.lrpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+over.m3<- over.lr.cM$byClass[c(1, 2, 5, 7, 11)]
+over.m3
+#plotting confusion matrix
+over.lr.cM$table
+fourfoldplot(over.lr.cM$table, col=rainbow(4), main="Oversampled LR Confusion Matrix")
+```
+
+# Train an k- Nearest Neigbour model
+```{r}
+set.seed(2024)
+tic()
+over.knnModel <- train(Malaria.Test~., data=over, method="knn", trControl=control)
+toc()
+over.knnModel
+over.knnpred=predict(over.knnModel,newdata = test)
+over.knn.cM<- confusionMatrix(over.knnpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+over.m4<- over.knn.cM$byClass[c(1, 2, 5, 7, 11)]
+over.m4
+#plotting confusion matrix
+over.knn.cM$table
+fourfoldplot(over.knn.cM$table, col=rainbow(4), main="Oversampled KNN Confusion Matrix")
+```
+
+# Train a Neural Net model
+```{r}
+#set.seed(2024)
+#tic()
+#over.nnModel <- train(Malaria.Test~., data=over, method="nnet", trControl=control)
+#toc()
+#over.nnModel
+#over.nnpred=predict(over.nnModel,newdata = test)
+#over.nn.cM<- confusionMatrix(over.nnpred,as.factor(test$Malaria.Test), positive = 'Positive', #mode='everything')
+#over.m5<- over.nn.cM$byClass[c(1, 2, 5, 7, 11)]
+#over.m5
+##plotting confusion matrix
+#over.nn.cM$table
+#fourfoldplot(over.nn.cM$table, col=rainbow(4), main="Oversampled NN Confusion Matrix")
+```
+
+# Train a Naive Bayes model
+```{r}
+set.seed(2024)
+tic()
+over.nbModel <- train(Malaria.Test~., data=over, method="nb", trControl=control)
+toc()
+over.nbModel
+over.nbpred=predict(over.nbModel,newdata = test)
+over.nb.cM<- confusionMatrix(over.nbpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+over.m6<- over.nb.cM$byClass[c(1, 2, 5, 7, 11)]
+over.m6
+#plotting confusion matrix
+over.nb.cM$table
+fourfoldplot(over.nb.cM$table, col=rainbow(4), main="Oversampled NB Confusion Matrix")
+```
+
+# Train a Linear Discriminant Analysis model
+```{r}
+set.seed(2024)
+over.ldaModel <- train(Malaria.Test~., data=over, method="lda", trControl=control)
+over.ldaModel
+over.ldapred=predict(over.ldaModel,newdata = test)
+over.lda.cM<- confusionMatrix(over.ldapred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+over.m7<- over.lda.cM$byClass[c(1, 2, 5, 7, 11)]
+over.m7
+##plotting confusion matrix
+over.lda.cM$table
+fourfoldplot(over.lda.cM$table, col=rainbow(4), main="Imbalanced LDA Confusion Matrix")
+```
+
+# Train a Decision Tree model
+```{r}
+set.seed(2024)
+over.DTModel <- train(Malaria.Test~., data=over, method="rpart", trControl=control)
+over.DTModel
+over.DTpred=predict(over.DTModel,newdata = test)
+over.DT.cM<- confusionMatrix(over.DTpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+over.m8<- over.DT.cM$byClass[c(1, 2, 5, 7, 11)]
+over.m8
+##plotting confusion matrix
+over.DT.cM$table
+fourfoldplot(over.DT.cM$table, col=rainbow(4), main="Imbalanced Decision Tree Confusion Matrix")
+```
+
+# Train a Bagging model
+```{r}
+set.seed(2024)
+over.bagModel <- train(Malaria.Test~., data=over, method="treebag", trControl=control)
+over.bagModel
+over.bagpred=predict(over.bagModel,newdata = test)
+over.bag.cM<- confusionMatrix(over.bagpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+over.m9<- over.bag.cM$byClass[c(1, 2, 5, 7, 11)]
+over.m9
+#plotting confusion matrix
+over.bag.cM$table
+fourfoldplot(over.bag.cM$table, col=rainbow(4), main="Oversampled Bagging Confusion Matrix")
+```
+
+# Train a Boosting model
+```{r}
+set.seed(2024)
+tic()
+over.boModel <- train(Malaria.Test~., data=over, method="ada", trControl=control)
+toc()
+over.boModel
+over.bopred=predict(over.boModel,newdata = test)
+over.bo.cM<- confusionMatrix(over.bopred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+over.m10<- over.bo.cM$byClass[c(1, 2, 5, 7, 11)]
+over.m10
+#plotting confusion matrix
+over.bo.cM$table
+fourfoldplot(over.bo.cM$table, col=rainbow(4), main="Oversampled Boosting Confusion Matrix")
+```
+
+=========================================================================================================================
+## MEASURES
+=========================================================================================================================
+
+```{r}
+measure <-round(data.frame(SVM= over.m1, 
+                                 RF= over.m2, 
+                                 LR = over.m3, 
+                                 KNN=over.m4, 
+                                 NB=over.m6, 
+                                 LDA=over.m7, 
+                                 DT=over.m8, 
+                                 Bagging = over.m9, 
+                                 Boosting= over.m10), 4)
+rownames(measure)=c('Sensitivity', 'Specificity', 'Precision','F1-Score', 'Balanced Accuracy')
+measure
+```
+
+# collect all resamples and compare
+```{r}
+results <- resamples(list(SVM=over.svmModel, 
+                          RF=over.RFModel,
+                          LR=over.lrModel,
+                          KNN=over.knnModel,
+                          NB=over.nbModel,
+                          LDA=over.ldaModel,
+                          DT=over.DTModel,
+                          Bagging=over.bagModel,
+                          Boosting=over.boModel))
+```
+
+```{r}
+library(dplyr)
+## summarize the distributions of the results 
+summary(results)
+```
+
+# Box-and-whisker plot of results
+This type of chart is used to visualize the distribution of data. It shows the following information:
+ * The center of the data (usually the median)
+ * The spread of the data (represented by the box)
+ * The presence of any outliers (data points that fall outside a certain range)
+  
+```{r}
+bwplot(results)
+```
+
+
+```{r}
+## dot plots of results
+dotplot(results)
+```
+
+=========================================================================================================================
+# Handle Imbalanced: Undersampled data 
+=========================================================================================================================
+
+```{r}
+under <- ovun.sample(Malaria.Test~., data = train, method = "under")$data
+```
+
+# Plot Target variable using ggplot function
+```{r}
+ggplot(under, aes(x = Malaria.Test, fill = Malaria.Test)) + 
+  geom_bar() + 
+  labs(x = "Malaria Test", 
+       y = "Respondent",
+       tittle = "Malaria Diagnosis Results",
+       caption = "Source: KNBS 2021 Data") +
+    theme_classic()
+```
+
+# ----------------------------------------------------------------------------------------------
+## Building Machine Learning Models
+# ----------------------------------------------------------------------------------------------
+
+# prepare training scheme for cross-validation
+```{r}
+control <- trainControl(method="repeatedcv", number=10, repeats=5)
+```
+
+# Train a SVM model
+```{r}
+set.seed(2024)
+tic()
+under.svmModel <- train(Malaria.Test~., data=under, method="svmRadial", trControl=control)
+toc()
+under.svmModel
+under.svmpred=predict(under.svmModel,newdata = test)
+under.SVM.cM<- confusionMatrix(under.svmpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+under.SVM.cM
+under.m1<- under.SVM.cM$byClass[c(1, 2, 5, 7, 11)]
+under.m1
+#plotting confusion matrix
+under.SVM.cM$table
+fourfoldplot(under.SVM.cM$table, col=rainbow(4), main="Undersampled SVM Confusion Matrix")
+```
+
+#Train a Random Forest model
+```{r}
+set.seed(2024)
+tic()
+under.RFModel <- train(Malaria.Test~., data=under, method="rf", trControl=control)
+toc()
+under.RFModel
+under.RFpred=predict(under.RFModel,newdata = test)
+under.RF.cM<- confusionMatrix(under.RFpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+under.m2<- under.RF.cM$byClass[c(1, 2, 5, 7, 11)]
+under.m2
+#plotting confusion matrix
+under.RF.cM$table
+fourfoldplot(under.RF.cM$table, col=rainbow(4), main="Undersampled RF Confusion Matrix")
+```
+# Train a Logisitic Regression model
+```{r}
+set.seed(2024)
+tic()
+under.lrModel <- train(Malaria.Test~., data=under, method="glm", trControl=control)
+toc()
+under.lrModel
+under.lrpred=predict(under.lrModel,newdata = test)
+under.lr.cM<- confusionMatrix(under.lrpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+under.m3<- under.lr.cM$byClass[c(1, 2, 5, 7, 11)]
+under.m3
+#plotting confusion matrix
+under.lr.cM$table
+fourfoldplot(under.lr.cM$table, col=rainbow(4), main="Undersampled LR Confusion Matrix")
+```
+
+# Train a k- Nearest Neigbour model
+
+```{r}
+set.seed(2024)
+under.knnModel <- train(Malaria.Test~., data=under, method="knn", trControl=control)
+under.knnModel
+under.knnpred=predict(under.knnModel,newdata = test)
+under.knn.cM<- confusionMatrix(under.knnpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+under.m4<- under.knn.cM$byClass[c(1, 2, 5, 7, 11)]
+under.m4
+#plotting confusion matrix
+under.knn.cM$table
+fourfoldplot(under.knn.cM$table, col=rainbow(4), main="Undersampled KNN Confusion Matrix")
+```
+
+# Train a Neural Net model
+```{r}
+#set.seed(2024)
+#tic()
+#under.nnModel <- train(Malaria.Test~., data=under, method="nnet", trControl=control)
+#toc()
+#under.nnModel
+#under.nnpred=predict(under.nnModel,newdata = test)
+#under.nn.cM<- confusionMatrix(under.nnpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+#under.m5<- under.nn.cM$byClass[c(1, 2, 5, 7, 11)]
+#under.m5
+#plotting confusion matrix
+#under.nn.cM$table
+#fourfoldplot(under.nn.cM$table, col=rainbow(4), main="Undersampled NN Confusion Matrix")
+```
+
+# Train a Naive Bayes model
+```{r}
+set.seed(2024)
+under.nbModel <- train(Malaria.Test~., data=under, method="nb", trControl=control)
+under.nbModel
+under.nbpred=predict(under.nbModel,newdata = test)
+under.nb.cM<- confusionMatrix(under.nbpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+under.m6<- under.nb.cM$byClass[c(1, 2, 5, 7, 11)]
+under.m6
+#plotting confusion matrix
+under.nb.cM$table
+fourfoldplot(under.nb.cM$table, col=rainbow(4), main="Undersampled NB Confusion Matrix")
+```
+
+## Train a Linear Discriminant Analysis model
+```{r}
+set.seed(2024)
+under.ldaModel <- train(Malaria.Test~., data=under, method="lda", trControl=control)
+under.ldaModel
+under.ldapred=predict(under.ldaModel,newdata = test)
+under.lda.cM<- confusionMatrix(under.ldapred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+under.m7<- under.lda.cM$byClass[c(1, 2, 5, 7, 11)]
+under.m7
+##plotting confusion matrix
+under.lda.cM$table
+fourfoldplot(under.lda.cM$table, col=rainbow(4), main="Imbalanced LDA Confusion Matrix")
+```
+
+# Train a Decision Tree model
+```{r}
+set.seed(2024)
+under.DTModel <- train(Malaria.Test~., data=under, method="rpart", trControl=control)
+under.DTModel
+under.DTpred=predict(under.DTModel,newdata = test)
+under.DT.cM<- confusionMatrix(under.DTpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+under.m8<- under.DT.cM$byClass[c(1, 2, 5, 7, 11)]
+under.m8
+##plotting confusion matrix
+under.DT.cM$table
+fourfoldplot(under.DT.cM$table, col=rainbow(4), main="Imbalanced Decision Tree Confusion Matrix")
+```
+# Train a Bagging model
+```{r}
+set.seed(2024)
+under.bagModel <- train(Malaria.Test~., data=under, method="treebag", trControl=control)
+under.bagModel
+under.bagpred=predict(under.bagModel,newdata = test)
+under.bag.cM<- confusionMatrix(under.bagpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+under.m9<- under.bag.cM$byClass[c(1, 2, 5, 7, 11)]
+under.m9
+#plotting confusion matrix
+under.bag.cM$table
+fourfoldplot(under.bag.cM$table, col=rainbow(4), main="Undersampled Bagging Confusion Matrix")
+```
+
+# Train a Boosting model
+```{r}
+set.seed(2024)
+tic()
+under.boModel <- train(Malaria.Test~., data=under, method="ada", trControl=control)
+toc()
+under.boModel
+under.bopred=predict(under.boModel,newdata = test)
+under.bo.cM<- confusionMatrix(under.bopred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+under.m10<- under.bo.cM$byClass[c(1, 2, 5, 7, 11)]
+under.m10
+#plotting confusion matrix
+under.bo.cM$table
+fourfoldplot(under.bo.cM$table, col=rainbow(4), main="Undersampled Boosting Confusion Matrix")
+```
+
+========================================================================================================================
+## TABULATE THE MEASURES
+========================================================================================================================
+```{r}
+measure <-round(data.frame(SVM= under.m1, 
+                                 RF= under.m2, 
+                                 LR = under.m3, 
+                                 KNN=under.m4, 
+                                 NB=under.m6, 
+                                 LDA=under.m7, 
+                                 DT=under.m8, 
+                                 Bagging = under.m9, 
+                                 Boosting = under.m10), 4)
+rownames(measure)=c('Sensitivity', 'Specificity', 'Precision','F1-Score', 'Balanced Accuracy')
+measure
+```
+
+# Collect all resamples and compare
+```{r}
+results <- resamples(list(SVM=under.svmModel, 
+                          RF=under.RFModel,
+                          LR=under.lrModel,
+                          KNN=under.knnModel, 
+                          NB=under.nbModel,
+                          LDA=under.ldaModel,
+                          Bagging=under.bagModel,
+                          boosting=under.boModel))
+```
+
+# Summarize the distribution of the results
+```{r}
+summary(results)
+```
+
+# Box-and-whisker plot of results
+This type of chart is used to visualize the distribution of data. It shows the following information:
+ * The center of the data (usually the median)
+ * The spread of the data (represented by the box)
+ * The presence of any outliers (data points that fall outside a certain range)
+
+```{r}
+bwplot(results, main ="Comparison of models")
+```
+
+# Dot plots of results
+```{r}
+dotplot(results)
+```
+
+=========================================================================================================================
+# Handle Imbalanced: Hybrid Method 
+=========================================================================================================================
+```{r}
+library(dplyr)
+hybrid <- ovun.sample(Malaria.Test~., data = train, method = "both")$data
+dim(hybrid)
+```
+
+
+# Plot Target variable using ggplot function
+```{r}
+ggplot(hybrid, aes(x = Malaria.Test, fill = Malaria.Test)) + 
+  geom_bar() + 
+  labs(x = "Malaria Test", 
+       y = "Respondent",
+       tittle = "Malaria Diagnosis Results",
+       caption = "Source: KNBS 2021 Data") +
+    theme_classic()
+```
+# ----------------------------------------------------------------------------------------------
+## Building Machine Learning Models
+# ----------------------------------------------------------------------------------------------
+
+# prepare training scheme for cross-validation
+```{r}
+control <- trainControl(method="repeatedcv", number=10, repeats=5)
+```
+
+# Train a SVM model
+```{r}
+set.seed(2024)
+tic()
+both.svmModel <- train(Malaria.Test~., data=hybrid, method="svmRadial", trControl=control)
+toc()
+both.svmModel
+plot(both.svmModel)
+both.svmpred=predict(both.svmModel,newdata = test)
+both.SVM.cM<- confusionMatrix(both.svmpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+both.SVM.cM
+both.m1<- both.SVM.cM$byClass[c(1, 2, 5, 7, 11)]
+both.m1
+#plotting confusion matrix
+both.SVM.cM$table
+fourfoldplot(both.SVM.cM$table, col=rainbow(4), main="Hybrid SVM Confusion Matrix")
+```
+# Train a Random Forest model
+```{r}
+set.seed(2024)
+tic()
+both.RFModel <- train(Malaria.Test~., data=hybrid, method="rf", trControl=control)
+toc()
+both.RFModel
+both.RFpred=predict(both.RFModel,newdata = test)
+both.RF.cM<- confusionMatrix(both.RFpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+both.m2<- both.RF.cM$byClass[c(1, 2, 5, 7, 11)]
+both.m2
+#plotting confusion matrix
+both.RF.cM$table
+fourfoldplot(both.RF.cM$table, col=rainbow(4), main="Hybrid RF Confusion Matrix")
+```
+
+# Train a Logisitic Regression model
+```{r}
+set.seed(2024)
+both.lrModel <- train(Malaria.Test~., data=hybrid, method="glm", trControl=control)
+both.lrModel
+both.lrpred=predict(both.lrModel,newdata = test)
+both.lr.cM<- confusionMatrix(both.lrpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+both.m3<- both.lr.cM$byClass[c(1, 2, 5, 7, 11)]
+both.m3
+#plotting confusion matrix
+both.lr.cM$table
+fourfoldplot(both.lr.cM$table, col=rainbow(4), main="Hybrid LR Confusion Matrix")
+```
+# Train a k- Nearest Neigbour model
+```{r}
+set.seed(2024)
+both.knnModel <- train(Malaria.Test~., data=hybrid, method="knn", trControl=control)
+both.knnModel
+both.knnpred=predict(both.knnModel,newdata = test)
+both.knn.cM<- confusionMatrix(both.knnpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+both.m4<- both.knn.cM$byClass[c(1, 2, 5, 7, 11)]
+both.m4
+#plotting confusion matrix
+both.knn.cM$table
+fourfoldplot(both.knn.cM$table, col=rainbow(4), main="Hybrid KNN Confusion Matrix")
+```
+# Train a Neural Net model
+```{r}
+#set.seed(2024)
+#tic()
+#both.nnModel <- train(Malaria.Test~., data=hybrid, method="nnet", trControl=control)
+#toc()
+#both.nnModel
+#both.nnpred=predict(both.nnModel,newdata = test)
+#both.nn.cM<- confusionMatrix(both.nnpred,as.factor(test$Malaria.Test), positive = 'Positive', #mode='everything')
+#both.m5<- both.nn.cM$byClass[c(1, 2, 5, 7, 11)]
+#both.m5
+#plotting confusion matrix
+#both.nn.cM$table
+#fourfoldplot(both.nn.cM$table, col=rainbow(4), main="Hybrid NN Confusion Matrix")
+```
+# Train a Naive Bayes model
+```{r}
+set.seed(2024)
+both.nbModel <- train(Malaria.Test~., data=hybrid, method="nb", trControl=control)
+both.nbModel
+both.nbpred=predict(both.nbModel,newdata = test)
+both.nb.cM<- confusionMatrix(both.nbpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+both.m6<- both.nb.cM$byClass[c(1, 2, 5, 7, 11)]
+both.m6
+#plotting confusion matrix
+both.nb.cM$table
+fourfoldplot(both.nb.cM$table, col=rainbow(4), main="Hybrid NB Confusion Matrix")
+```
+# train a Linear Discriminant Analysis model
+```{r}
+set.seed(2024)
+both.ldaModel <- train(Malaria.Test~., data=hybrid, method="lda", trControl=control)
+both.ldaModel
+both.ldapred=predict(both.ldaModel,newdata = test)
+both.lda.cM<- confusionMatrix(both.ldapred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+both.m7<- both.lda.cM$byClass[c(1, 2, 5, 7, 11)]
+both.m7
+##plotting confusion matrix
+both.lda.cM$table
+fourfoldplot(both.lda.cM$table, col=rainbow(4), main="Imbalanced LDA Confusion Matrix")
+```
+
+# Train a Decision Tree model
+```{r}
+set.seed(2024)
+both.DTModel <- train(Malaria.Test~., data=hybrid, method="rpart", trControl=control)
+both.DTModel
+both.DTpred=predict(both.DTModel,newdata = test)
+both.DT.cM<- confusionMatrix(both.DTpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+both.m8<- both.DT.cM$byClass[c(1, 2, 5, 7, 11)]
+both.m8
+##plotting confusion matrix
+both.DT.cM$table
+fourfoldplot(both.DT.cM$table, col=rainbow(4), main="Imbalanced LDA Confusion Matrix")
+```
+
+
+# Train a Bagging model
+```{r}
+set.seed(2024)
+both.bagModel <- train(Malaria.Test~., data=hybrid, method="treebag", trControl=control)
+both.bagModel
+both.bagpred=predict(both.bagModel,newdata = test)
+both.bag.cM<- confusionMatrix(both.bagpred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+both.m9<- both.bag.cM$byClass[c(1, 2, 5, 7, 11)]
+both.m9
+#plotting confusion matrix
+both.bag.cM$table
+fourfoldplot(both.bag.cM$table, col=rainbow(4), main="Hybrid Bagging Confusion Matrix")
+```
+# Train a Boosting model
+```{r}
+set.seed(2024)
+tic()
+both.boModel <- train(Malaria.Test~., data=hybrid, method="ada", trControl=control)
+toc()
+both.boModel
+both.bopred=predict(both.boModel,newdata = test)
+both.bo.cM<- confusionMatrix(both.bopred,as.factor(test$Malaria.Test), positive = 'Positive', mode='everything')
+both.m10<- both.bo.cM$byClass[c(1, 2, 5, 7, 11)]
+both.m10
+#plotting confusion matrix
+both.bo.cM$table
+fourfoldplot(both.bo.cM$table, col=rainbow(4), main="Hybrid Boosting Confusion Matrix")
+```
+#------------------------------------------- measure----------------------------
+
+```{r}
+measure <-round(data.frame(SVM=both.m1, 
+                                 RF=both.m2, 
+                                 LR=both.m3, 
+                                 KNN=both.m4, 
+                                 NB=both.m6, 
+                                 LDA=both.m7, 
+                                 DT=both.m8,
+                                 Bagging=both.m9, 
+                                 Boosting=both.m10), 4)
+rownames(measure)=c('Sensitivity', 'Specificity', 'Precision','F1-Score', 'Balanced Accuracy')
+measure
+```
+
+
+```{r}
+results <- resamples(list(SVM=both.svmModel, 
+                          RF=both.RFModel,
+                          LR=both.lrModel,
+                          KNN=both.knnModel,
+                          NB=both.nbModel,
+                          LDA=both.ldaModel,
+                          DT=both.DTModel,
+                          Bagging=both.bagModel,
+                          Boosting=both.boModel))
+```
+
+# summarize the distributions of the results 
+```{r}
+library(dplyr)
+summary(results)
+```
+
+# Box-and-whisker plot of results
+This type of chart is used to visualize the distribution of data. It shows the following information:
+ * The center of the data (usually the median)
+ * The spread of the data (represented by the box)
+ * The presence of any outliers (data points that fall outside a certain range)
+ 
+```{r}
+## boxplots of results
+bwplot(results)
+```
+
+```{r}
+## dot plots of results
+dotplot(results)
+```
+
